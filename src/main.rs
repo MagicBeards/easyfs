@@ -244,22 +244,15 @@ fn run(cli: Cli) -> Result<(), String> {
                     stats.bytes
                 );
             } else {
+                // The message already names the path when there is one, so printing
+                // the path field as a prefix repeats it.
                 for finding in &shown {
-                    match &finding.path {
-                        Some(path) => println!(
-                            "{} [{}] {}: {}",
-                            finding.severity.label(),
-                            finding.code,
-                            path,
-                            finding.message
-                        ),
-                        None => println!(
-                            "{} [{}] {}",
-                            finding.severity.label(),
-                            finding.code,
-                            finding.message
-                        ),
-                    }
+                    println!(
+                        "{} [{}] {}",
+                        finding.severity.label(),
+                        finding.code,
+                        finding.message
+                    );
                 }
                 let stats = &report.stats;
                 println!(

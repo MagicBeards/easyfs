@@ -5,6 +5,19 @@ Notable changes, newest first. This project follows
 the public interface, so a flag being removed or changing meaning is a breaking
 change.
 
+## 0.4.1 — 2026-11-23
+
+### Fixed
+
+- `check` printed the path twice in its text output — once as a prefix and once
+  inside the message (`/hello.txt: /hello.txt (inode 1) is …`). The message
+  already names the file, so the prefix is gone. `--json` is unchanged.
+
+### Added
+
+- `docs/ARTICLE.md`: the write-up of what the tool is for, in Chinese and English,
+  ready to publish anywhere.
+
 ## 0.4.0 — 2026-11-23
 
 ### Added
