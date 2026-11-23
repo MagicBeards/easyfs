@@ -130,8 +130,8 @@ reachable from two directories is corruption, not a feature.
 ## A reader in 40 lines
 
 This is a complete, if unforgiving, Python reader for the layout above. It parses
-the demo image in [`examples/`](../examples) and any image from the tutorial's
-packer.
+the image produced by `cargo run --example demo_image -- demo.img`, and any image
+from the tutorial's packer.
 
 ```python
 import struct, sys

@@ -12,6 +12,14 @@ $ easyfs ls fs.img
 d       64  etc
 ```
 
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [docs/FORMAT.md](docs/FORMAT.md) | The on-disk format byte by byte, with a 40-line Python reader |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | The kernel cannot load a program — what to check, in what order |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
+
 ## Why this exists
 
 `easy-fs` is the filesystem the rCore tutorial teaches with. Its `easy-fs-fuse`

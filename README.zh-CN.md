@@ -11,6 +11,14 @@ d       64  etc
 
 > English: [README.md](README.md)
 
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/FORMAT.md](docs/FORMAT.md) | 磁盘格式的字节级说明，附一段 40 行 Python 阅读器 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 内核加载不了程序时，按顺序查什么 |
+| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
+
 ## 为什么有这个工具
 
 `easy-fs` 是 rCore 教程里教文件系统那一章用的格式。教程提供的 `easy-fs-fuse` 负责**打包**——把用户程序塞进 `fs.img`，内核把它挂载成 `/`。
