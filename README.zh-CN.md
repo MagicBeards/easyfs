@@ -35,14 +35,14 @@ cargo install --git https://github.com/MagicBeards/easyfs
 
 | 命令 | 作用 |
 | --- | --- |
-| `easyfs ls <img> [路径]` | 列出目录；`--names-only` 只输出名字 |
+| `easyfs ls <img> [路径]` | 列出目录；`--names-only`、`--inode`、`--json` |
 | `easyfs cat <img> <路径>` | 把文件内容输出到 stdout |
 | `easyfs tree <img> [路径]` | 打印整棵目录树 |
 | `easyfs extract <img> [目录]` | 把所有文件导出到本地目录 |
-| `easyfs stat <img>` | 打印超级块里记录的几何信息 |
-| `easyfs check <img>` | 检查镜像内部一致性，有问题时返回非零 |
-| `easyfs file <img> <路径>` | 判断文件类型：ELF 的位数、字节序、目标机器 |
-| `easyfs diff <a> <b>` | 比较两个镜像，列出差异 |
+| `easyfs stat <img>` | 打印超级块里记录的几何信息；`--json` |
+| `easyfs check <img>` | 检查镜像内部一致性，有问题时返回非零；`--json`、`--errors-only`、`--payload` |
+| `easyfs file <img> <路径>` | 判断文件类型：ELF 的位数、字节序、目标机器；`--json` |
+| `easyfs diff <a> <b>` | 比较两个镜像，列出差异；`--json` |
 
 路径用 `/` 分隔、相对根目录，所以 `easyfs cat fs.img etc/passwd` 可以直接用。根目录就是空路径。
 
@@ -55,6 +55,21 @@ easyfs extract fs.img /tmp/root       # 全部导出来，慢慢 grep
 easyfs check fs.img                   # 镜像坏了，还是我的内核坏了？
 easyfs diff old.img new.img           # 重新构建之后，到底变了什么？
 ```
+
+## 在脚本里用
+
+凡是会报告内容的命令都支持 `--json`，构建脚本不用去解析人读的文本：
+
+```console
+$ easyfs check fs.img --json
+{"ok":true,"findings":[],"stats":{"inodes_allocated":4,...}}
+
+$ easyfs ls fs.img --json
+[{"name":"hello.txt","inode":1,"type":"file","size":18},...]
+```
+
+`check` 在两种模式下出错都返回非零，所以 `easyfs check fs.img --json > report.json`
+既能卡住流水线，又留下一份机器可读的记录。
 
 ## `file`：这个二进制是不是对架构的？
 
@@ -113,6 +128,10 @@ cargo run -- check demo.img
 ```
 
 ## 它读的格式
+
+完整的字节级说明——区域布局、超级块字段、inode 记录、位图位序、块寻址、目录项，以及一段能复现 `easyfs ls` 输出的 40 行 Python 阅读器——在 **[docs/FORMAT.md](docs/FORMAT.md)**。
+
+简版：
 
 ```
 block 0                    : 超级块，magic 0x78887C6A + 5 个块计数（共 24 字节）

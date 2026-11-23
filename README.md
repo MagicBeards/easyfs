@@ -42,14 +42,14 @@ cargo build --release          # target/release/easyfs
 
 | Command | What it does |
 | --- | --- |
-| `easyfs ls <img> [path]` | List a directory. `--names-only` drops the type and size columns. |
+| `easyfs ls <img> [path]` | List a directory. `--names-only`, `--inode`, `--json`. |
 | `easyfs cat <img> <path>` | Write one file to stdout. |
 | `easyfs tree <img> [path]` | Print the whole tree. |
 | `easyfs extract <img> [dir]` | Copy every file out to a directory. |
-| `easyfs stat <img>` | Print the geometry recorded in the superblock. |
-| `easyfs check <img>` | Look for internal inconsistencies. Exits non-zero on error. |
-| `easyfs file <img> <path>` | Name a file's type: ELF class, byte order and machine. |
-| `easyfs diff <a> <b>` | List what differs between two images. |
+| `easyfs stat <img>` | Print the geometry recorded in the superblock. `--json`. |
+| `easyfs check <img>` | Look for internal inconsistencies. Exits non-zero on error. `--json`, `--errors-only`, `--payload`. |
+| `easyfs file <img> <path>` | Name a file's type: ELF class, byte order and machine. `--json`. |
+| `easyfs diff <a> <b>` | List what differs between two images. `--json`. |
 
 Paths are slash-separated and relative to the root, so `easyfs cat fs.img
 etc/passwd` works. The root is the empty path.
@@ -63,6 +63,22 @@ easyfs extract fs.img /tmp/root            # pull everything out and grep it
 easyfs check fs.img                         # is the image broken, or is my kernel?
 easyfs diff old.img new.img                 # what changed after I rebuilt?
 ```
+
+## Scripting
+
+Every command that reports something also takes `--json`, so a build step can
+consume it without parsing prose:
+
+```console
+$ easyfs check fs.img --json
+{"ok":true,"findings":[],"stats":{"inodes_allocated":4,...}}
+
+$ easyfs ls fs.img --json
+[{"name":"hello.txt","inode":1,"type":"file","size":18},...]
+```
+
+`check` still exits non-zero on an error in either mode, so `easyfs check fs.img
+--json > report.json` gates a pipeline and leaves a machine-readable record.
 
 ## `file`: is this binary the right architecture?
 
@@ -149,6 +165,12 @@ cargo run -- tree demo.img
 ```
 
 ## The format it reads
+
+The full byte-level description — region layout, superblock fields, inode record,
+bitmap bit order, block addressing, directory entries, and a 40-line Python
+reader that reproduces `easyfs ls` — is in **[docs/FORMAT.md](docs/FORMAT.md)**.
+
+The short version:
 
 ```
 block 0                              superblock: magic 0x78887C6A, then the five

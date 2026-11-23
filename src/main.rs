@@ -29,6 +29,12 @@ enum Command {
         /// List one entry per line without type or size columns.
         #[arg(short, long)]
         names_only: bool,
+        /// Show each entry's inode number.
+        #[arg(long)]
+        inode: bool,
+        /// Emit a JSON array instead of columns.
+        #[arg(long)]
+        json: bool,
     },
     /// Write one file from the image to stdout.
     Cat {
@@ -41,6 +47,9 @@ enum Command {
     Stat {
         /// Path to the filesystem image.
         image: PathBuf,
+        /// Emit a JSON object instead of labelled lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Check the image for internal inconsistencies.
     ///
@@ -54,6 +63,9 @@ enum Command {
         /// Also validate files that look like ELF binaries.
         #[arg(long)]
         payload: bool,
+        /// Emit a JSON object instead of lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Describe one file: ELF class, byte order and machine, or plain bytes.
     File {
@@ -61,6 +73,9 @@ enum Command {
         image: PathBuf,
         /// Path of the file inside the image.
         path: String,
+        /// Emit a JSON object instead of a sentence.
+        #[arg(long)]
+        json: bool,
     },
     /// Compare two images and list what differs.
     Diff {
@@ -68,6 +83,9 @@ enum Command {
         before: PathBuf,
         /// The image after.
         after: PathBuf,
+        /// Emit a JSON array instead of lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Print the whole directory tree.
     Tree {
@@ -104,19 +122,46 @@ fn run(cli: Cli) -> Result<(), String> {
             image,
             path,
             names_only,
+            inode,
+            json,
         } => {
             let image = open(&image)?;
-            let inode = image.resolve(&path).map_err(|e| e.to_string())?;
-            let mut entries = image.read_dir(inode).map_err(|e| e.to_string())?;
+            let inode_id = image.resolve(&path).map_err(|e| e.to_string())?;
+            let mut entries = image.read_dir(inode_id).map_err(|e| e.to_string())?;
             entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+            if json {
+                let rows: Vec<String> = entries
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "{{\"name\":{},\"inode\":{},\"type\":{},\"size\":{}}}",
+                            json_string(&entry.name),
+                            entry.inode,
+                            json_string(kind_name(entry.kind)),
+                            entry.size
+                        )
+                    })
+                    .collect();
+                println!("[{}]", rows.join(","));
+                return Ok(());
+            }
+
             for entry in entries {
                 if names_only {
                     println!("{}", entry.name);
+                    continue;
+                }
+                let kind = match entry.kind {
+                    InodeType::Dir => 'd',
+                    InodeType::File => '-',
+                };
+                if inode {
+                    println!(
+                        "{kind} {:>6} {:>8}  {}",
+                        entry.inode, entry.size, entry.name
+                    );
                 } else {
-                    let kind = match entry.kind {
-                        InodeType::Dir => 'd',
-                        InodeType::File => '-',
-                    };
                     println!("{kind} {:>8}  {}", entry.size, entry.name);
                 }
             }
@@ -129,9 +174,23 @@ fn run(cli: Cli) -> Result<(), String> {
                 .write_all(&data)
                 .map_err(|e| format!("cannot write to stdout: {e}"))?;
         }
-        Command::Stat { image } => {
+        Command::Stat { image, json } => {
             let image = open(&image)?;
             let sb = image.superblock();
+            if json {
+                println!(
+                    "{{\"total_blocks\":{},\"inode_bitmap_blocks\":{},\"inode_area_blocks\":{},\"data_bitmap_blocks\":{},\"data_area_blocks\":{},\"inodes\":{},\"inode_area_start\":{},\"data_area_start\":{}}}",
+                    sb.total_blocks,
+                    sb.inode_bitmap_blocks,
+                    sb.inode_area_blocks,
+                    sb.data_bitmap_blocks,
+                    sb.data_area_blocks,
+                    sb.inode_count(),
+                    sb.inode_area_start(),
+                    sb.data_area_start()
+                );
+                return Ok(());
+            }
             println!("total_blocks        {}", sb.total_blocks);
             println!("inode_bitmap_blocks {}", sb.inode_bitmap_blocks);
             println!("inode_area_blocks   {}", sb.inode_area_blocks);
@@ -145,68 +204,171 @@ fn run(cli: Cli) -> Result<(), String> {
             image,
             errors_only,
             payload,
+            json,
         } => {
             let image = open(&image)?;
             let report = easyfs::check::check_with(&image, payload);
-            for finding in &report.findings {
-                if errors_only && finding.severity != Severity::Error {
-                    continue;
+            let shown: Vec<_> = report
+                .findings
+                .iter()
+                .filter(|f| !(errors_only && f.severity != Severity::Error))
+                .collect();
+
+            if json {
+                let findings: Vec<String> = shown
+                    .iter()
+                    .map(|f| {
+                        format!(
+                            "{{\"severity\":{},\"code\":{},\"path\":{},\"message\":{}}}",
+                            json_string(f.severity.label()),
+                            json_string(f.code),
+                            match &f.path {
+                                Some(p) => json_string(p),
+                                None => "null".to_string(),
+                            },
+                            json_string(&f.message)
+                        )
+                    })
+                    .collect();
+                let stats = &report.stats;
+                println!(
+                    "{{\"ok\":{},\"findings\":[{}],\"stats\":{{\"inodes_allocated\":{},\"inodes_reachable\":{},\"blocks_allocated\":{},\"blocks_referenced\":{},\"files\":{},\"dirs\":{},\"bytes\":{}}}}}",
+                    !report.has_errors(),
+                    findings.join(","),
+                    stats.inodes_allocated,
+                    stats.inodes_reachable,
+                    stats.blocks_allocated,
+                    stats.blocks_referenced,
+                    stats.files,
+                    stats.dirs,
+                    stats.bytes
+                );
+            } else {
+                for finding in &shown {
+                    match &finding.path {
+                        Some(path) => println!(
+                            "{} [{}] {}: {}",
+                            finding.severity.label(),
+                            finding.code,
+                            path,
+                            finding.message
+                        ),
+                        None => println!(
+                            "{} [{}] {}",
+                            finding.severity.label(),
+                            finding.code,
+                            finding.message
+                        ),
+                    }
                 }
-                match &finding.path {
-                    Some(path) => println!(
-                        "{} [{}] {}: {}",
-                        finding.severity.label(),
-                        finding.code,
-                        path,
-                        finding.message
-                    ),
-                    None => println!(
-                        "{} [{}] {}",
-                        finding.severity.label(),
-                        finding.code,
-                        finding.message
-                    ),
+                let stats = &report.stats;
+                println!(
+                    "inodes {} allocated / {} reachable, blocks {} allocated / {} referenced",
+                    stats.inodes_allocated,
+                    stats.inodes_reachable,
+                    stats.blocks_allocated,
+                    stats.blocks_referenced
+                );
+                println!(
+                    "{} files, {} directories, {} bytes of content",
+                    stats.files, stats.dirs, stats.bytes
+                );
+                if report.has_errors() {
+                    println!(
+                        "{} error(s), {} warning(s)",
+                        report.count(Severity::Error),
+                        report.count(Severity::Warning)
+                    );
+                } else {
+                    println!("no errors, {} warning(s)", report.count(Severity::Warning));
                 }
             }
-            let stats = &report.stats;
-            println!(
-                "inodes {} allocated / {} reachable, blocks {} allocated / {} referenced",
-                stats.inodes_allocated,
-                stats.inodes_reachable,
-                stats.blocks_allocated,
-                stats.blocks_referenced
-            );
-            println!(
-                "{} files, {} directories, {} bytes of content",
-                stats.files, stats.dirs, stats.bytes
-            );
+
             if report.has_errors() {
-                println!(
-                    "{} error(s), {} warning(s)",
-                    report.count(Severity::Error),
-                    report.count(Severity::Warning)
-                );
                 return Err(format!("{} error(s) found", report.count(Severity::Error)));
             }
-            println!("no errors, {} warning(s)", report.count(Severity::Warning));
         }
-        Command::File { image, path } => {
+        Command::File { image, path, json } => {
             let image = open(&image)?;
             let inode = image.resolve(&path).map_err(|e| e.to_string())?;
             let data = image.read_file(inode).map_err(|e| e.to_string())?;
-            if easyfs::elf::is_elf(&data) {
+
+            let (is_elf, info, problem) = if easyfs::elf::is_elf(&data) {
                 match easyfs::elf::parse(&data) {
-                    Ok(info) => println!("{}", info.describe()),
-                    Err(problem) => println!("ELF, but {}", problem.describe()),
+                    Ok(info) => (true, Some(info), None),
+                    Err(problem) => (true, None, Some(problem)),
                 }
             } else {
-                println!("data ({} bytes, not ELF)", data.len());
+                (false, None, None)
+            };
+
+            if json {
+                let detail = match (&info, &problem) {
+                    (Some(info), _) => format!(
+                        "{{\"class\":{},\"little_endian\":{},\"object_type\":{},\"machine\":{},\"machine_name\":{}}}",
+                        info.class,
+                        info.little_endian,
+                        info.object_type,
+                        info.machine,
+                        json_string(easyfs::elf::machine_name(info.machine))
+                    ),
+                    _ => "null".to_string(),
+                };
+                println!(
+                    "{{\"size\":{},\"is_elf\":{},\"elf\":{},\"problem\":{}}}",
+                    data.len(),
+                    is_elf,
+                    detail,
+                    match &problem {
+                        Some(p) => json_string(&p.describe()),
+                        None => "null".to_string(),
+                    }
+                );
+                return Ok(());
+            }
+
+            match (info, problem) {
+                (Some(info), _) => println!("{}", info.describe()),
+                (None, Some(problem)) => println!("ELF, but {}", problem.describe()),
+                (None, None) => println!("data ({} bytes, not ELF)", data.len()),
             }
         }
-        Command::Diff { before, after } => {
+        Command::Diff {
+            before,
+            after,
+            json,
+        } => {
             let before = open(&before)?;
             let after = open(&after)?;
             let differences = easyfs::diff::diff(&before, &after).map_err(|e| e.to_string())?;
+
+            if json {
+                let rows: Vec<String> = differences
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "{{\"path\":{},\"change\":{},\"before_size\":{},\"after_size\":{}}}",
+                            json_string(&d.path),
+                            json_string(match d.side {
+                                easyfs::Side::Added => "added",
+                                easyfs::Side::Removed => "removed",
+                                easyfs::Side::Changed => "changed",
+                            }),
+                            match d.before_size {
+                                Some(v) => v.to_string(),
+                                None => "null".to_string(),
+                            },
+                            match d.after_size {
+                                Some(v) => v.to_string(),
+                                None => "null".to_string(),
+                            }
+                        )
+                    })
+                    .collect();
+                println!("[{}]", rows.join(","));
+                return Ok(());
+            }
+
             for difference in &differences {
                 let marker = match difference.side {
                     easyfs::Side::Added => "+",
@@ -234,7 +396,6 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             println!("{} difference(s)", differences.len());
         }
-
         Command::Tree { image, path } => {
             let image = open(&image)?;
             let inode = image.resolve(&path).map_err(|e| e.to_string())?;
@@ -253,6 +414,32 @@ fn run(cli: Cli) -> Result<(), String> {
 
 fn open(path: &PathBuf) -> Result<Image, String> {
     Image::open(path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn kind_name(kind: InodeType) -> &'static str {
+    match kind {
+        InodeType::File => "file",
+        InodeType::Dir => "dir",
+    }
+}
+
+/// Quote and escape a string as a JSON value.
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn walk(image: &Image, inode: u32, depth: usize) -> Result<(), String> {

@@ -44,3 +44,26 @@ jobs:
           test -f extracted/sub/inner.txt
           # A valid image must pass the checker with a zero exit code.
           cargo run --quiet -- check demo.img
+
+      - name: JSON output parses
+        shell: bash
+        run: |
+          set -eu
+          for args in "ls demo.img" "stat demo.img" "check demo.img" "file demo.img hello.txt"; do
+            cargo run --quiet -- $args --json | python3 -m json.tool > /dev/null
+          done
+          cargo run --quiet -- diff demo.img demo.img --json | python3 -m json.tool > /dev/null
+
+      # The Python reader in docs/FORMAT.md is a claim about the format. If it
+      # stops agreeing with the tool, one of them is wrong — fail rather than
+      # ship a document that lies.
+      - name: FORMAT.md reader still agrees with the tool
+        shell: bash
+        run: |
+          set -eu
+          cargo run --quiet --example demo_image -- demo.img
+          awk '/^```python$/{f=1;next} /^```$/{f=0} f' docs/FORMAT.md > reader.py
+          python3 reader.py demo.img | awk '{print $2}' > from_doc.txt
+          cargo run --quiet -- ls demo.img --names-only | sort > from_tool.txt
+          sort from_doc.txt | diff - from_tool.txt
+          echo "FORMAT.md reader matches easyfs ls"
