@@ -3,6 +3,8 @@
 Inspect `easy-fs` filesystem images from the [rCore tutorial](https://rcore-os.cn/rCore-Tutorial-Book-v3/)
 — without booting the kernel.
 
+> 中文说明见 [README.zh-CN.md](README.zh-CN.md).
+
 ```console
 $ easyfs ls fs.img
 -    18432  initproc
