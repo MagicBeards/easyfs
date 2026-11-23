@@ -18,9 +18,13 @@
 //! ```
 
 pub mod check;
+pub mod diff;
+pub mod elf;
 pub mod format;
 pub mod image;
 
 pub use check::{check, Finding, Report, Severity, Stats};
+pub use diff::{diff, Difference, Side};
+pub use elf::{ElfInfo, ElfProblem};
 pub use format::{Error, InodeType, SuperBlock};
 pub use image::{Entry, Image};

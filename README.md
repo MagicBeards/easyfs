@@ -48,6 +48,8 @@ cargo build --release          # target/release/easyfs
 | `easyfs extract <img> [dir]` | Copy every file out to a directory. |
 | `easyfs stat <img>` | Print the geometry recorded in the superblock. |
 | `easyfs check <img>` | Look for internal inconsistencies. Exits non-zero on error. |
+| `easyfs file <img> <path>` | Name a file's type: ELF class, byte order and machine. |
+| `easyfs diff <a> <b>` | List what differs between two images. |
 
 Paths are slash-separated and relative to the root, so `easyfs cat fs.img
 etc/passwd` works. The root is the empty path.
@@ -56,10 +58,26 @@ Typical uses:
 
 ```bash
 easyfs tree fs.img                          # what did the packer actually put in?
-easyfs cat fs.img user_shell | file -       # is this a RISC-V ELF or garbage?
+easyfs file fs.img user_shell               # is this a RISC-V ELF, or something else?
 easyfs extract fs.img /tmp/root            # pull everything out and grep it
 easyfs check fs.img                         # is the image broken, or is my kernel?
+easyfs diff old.img new.img                 # what changed after I rebuilt?
 ```
+
+## `file`: is this binary the right architecture?
+
+A kernel that cannot load a program usually says so in a way that does not name
+the reason. The reason is often the first 20 bytes of the file.
+
+```console
+$ easyfs file fs.img user_shell
+ELF 64-bit LSB executable, RISC-V (243)
+$ easyfs file fs.img notes.txt
+data (18 bytes, not ELF)
+```
+
+Only the identification fields and two header words are read. This is not an
+ELF parser — it does not walk program headers, sections, or symbols.
 
 ## `check`: is the image wrong, or is the kernel?
 
@@ -100,6 +118,28 @@ And as warnings:
 
 Warnings do not change the exit code; `--errors-only` hides them from the output.
 
+Findings name the path and the inode, not just the inode, so a report points at
+a file:
+
+```console
+$ easyfs check fs.img
+error [inode-not-allocated] /hello.txt: /hello.txt (inode 1) is reachable but the bitmap marks it free
+```
+
+### `--payload`: also check the binaries
+
+The filesystem can be perfectly consistent while the program inside it is wrong.
+`easyfs check --payload` additionally reads every file that starts with the ELF
+magic and checks its identification:
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `elf-header` | error | Starts with the ELF magic but the identification is malformed or truncated |
+| `elf-machine` | warning | A valid ELF, but not 64-bit little-endian RISC-V — a RISC-V kernel cannot load it |
+
+It is a warning rather than an error because an image can legitimately carry a
+binary for another target; you decide whether that is intended.
+
 ## Try it without a kernel
 
 ```bash
@@ -133,8 +173,11 @@ device. A directory's entries live in its data blocks as 32-byte records: a
   `easy-fs-fuse` (or your own packer) to write one.
 - **`check` is not a repair tool.** It reports; it never writes. A leaked inode
   stays leaked until you rebuild the image.
-- **`check` does not validate file contents.** It confirms that blocks are
-  reachable and accounted for, not that a binary in the image is a valid ELF.
+- **`check` does not validate file contents** unless `--payload` is given, and
+  even then only the ELF identification fields. It never confirms a binary is
+  otherwise well-formed or correct.
+- **`diff` compares by path and content**, not by inode number or layout. Two
+  images with the same files in different blocks report no differences.
 - Only the layout above. A fork that changed the inode size or the pointer
   layout will not parse.
 

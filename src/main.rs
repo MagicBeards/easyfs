@@ -51,6 +51,23 @@ enum Command {
         /// Report errors only; skip warnings about leaked inodes and blocks.
         #[arg(long)]
         errors_only: bool,
+        /// Also validate files that look like ELF binaries.
+        #[arg(long)]
+        payload: bool,
+    },
+    /// Describe one file: ELF class, byte order and machine, or plain bytes.
+    File {
+        /// Path to the filesystem image.
+        image: PathBuf,
+        /// Path of the file inside the image.
+        path: String,
+    },
+    /// Compare two images and list what differs.
+    Diff {
+        /// The image before.
+        before: PathBuf,
+        /// The image after.
+        after: PathBuf,
     },
     /// Print the whole directory tree.
     Tree {
@@ -124,19 +141,32 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("inode_area_start    {}", sb.inode_area_start());
             println!("data_area_start     {}", sb.data_area_start());
         }
-        Command::Check { image, errors_only } => {
+        Command::Check {
+            image,
+            errors_only,
+            payload,
+        } => {
             let image = open(&image)?;
-            let report = easyfs::check(&image);
+            let report = easyfs::check::check_with(&image, payload);
             for finding in &report.findings {
                 if errors_only && finding.severity != Severity::Error {
                     continue;
                 }
-                println!(
-                    "{} [{}] {}",
-                    finding.severity.label(),
-                    finding.code,
-                    finding.message
-                );
+                match &finding.path {
+                    Some(path) => println!(
+                        "{} [{}] {}: {}",
+                        finding.severity.label(),
+                        finding.code,
+                        path,
+                        finding.message
+                    ),
+                    None => println!(
+                        "{} [{}] {}",
+                        finding.severity.label(),
+                        finding.code,
+                        finding.message
+                    ),
+                }
             }
             let stats = &report.stats;
             println!(
@@ -160,6 +190,51 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             println!("no errors, {} warning(s)", report.count(Severity::Warning));
         }
+        Command::File { image, path } => {
+            let image = open(&image)?;
+            let inode = image.resolve(&path).map_err(|e| e.to_string())?;
+            let data = image.read_file(inode).map_err(|e| e.to_string())?;
+            if easyfs::elf::is_elf(&data) {
+                match easyfs::elf::parse(&data) {
+                    Ok(info) => println!("{}", info.describe()),
+                    Err(problem) => println!("ELF, but {}", problem.describe()),
+                }
+            } else {
+                println!("data ({} bytes, not ELF)", data.len());
+            }
+        }
+        Command::Diff { before, after } => {
+            let before = open(&before)?;
+            let after = open(&after)?;
+            let differences = easyfs::diff::diff(&before, &after).map_err(|e| e.to_string())?;
+            for difference in &differences {
+                let marker = match difference.side {
+                    easyfs::Side::Added => "+",
+                    easyfs::Side::Removed => "-",
+                    easyfs::Side::Changed => "~",
+                };
+                match difference.side {
+                    easyfs::Side::Changed => println!(
+                        "{marker} {} ({} -> {} bytes)",
+                        difference.path,
+                        difference.before_size.unwrap_or(0),
+                        difference.after_size.unwrap_or(0)
+                    ),
+                    easyfs::Side::Added => println!(
+                        "{marker} {} ({} bytes)",
+                        difference.path,
+                        difference.after_size.unwrap_or(0)
+                    ),
+                    easyfs::Side::Removed => println!(
+                        "{marker} {} ({} bytes)",
+                        difference.path,
+                        difference.before_size.unwrap_or(0)
+                    ),
+                }
+            }
+            println!("{} difference(s)", differences.len());
+        }
+
         Command::Tree { image, path } => {
             let image = open(&image)?;
             let inode = image.resolve(&path).map_err(|e| e.to_string())?;

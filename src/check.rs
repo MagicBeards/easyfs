@@ -2,11 +2,12 @@
 //! and the tree actually reference.
 //!
 //! The point of this pass is to answer the question a failing kernel cannot: is
-//! the image itself wrong, or is the kernel? Every finding names the inode or
-//! block it concerns, so it can be traced back.
+//! the image itself wrong, or is the kernel? Every finding names the path and the
+//! inode it concerns, so it can be traced back to a file rather than to a number.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::elf;
 use crate::format::{bit_count, bit_get, InodeType, BLOCK_SIZE, DIR_ENTRY_SIZE};
 use crate::image::Image;
 
@@ -36,6 +37,8 @@ pub struct Finding {
     pub severity: Severity,
     /// A stable short identifier, so the same problem reads the same every run.
     pub code: &'static str,
+    /// Path inside the image, when the finding is about a reachable file.
+    pub path: Option<String>,
     /// Human-readable detail.
     pub message: String,
 }
@@ -83,12 +86,39 @@ impl Report {
     }
 }
 
+/// Where an inode sits, for a message: its path when known, its number always.
+fn where_is(inode_id: u32, paths: &BTreeMap<u32, String>) -> String {
+    match paths.get(&inode_id) {
+        Some(path) => format!("{path} (inode {inode_id})"),
+        None => format!("inode {inode_id}"),
+    }
+}
+
 /// Walk the image and report every inconsistency found.
 pub fn check(image: &Image) -> Report {
+    check_with(image, false)
+}
+
+/// Walk the image and report every inconsistency found.
+///
+/// With `payload` set, regular files that begin with the ELF magic also get
+/// their identification fields checked, so a binary built for the wrong machine
+/// is reported here instead of surfacing later as a load failure.
+pub fn check_with(image: &Image, payload: bool) -> Report {
     let mut findings = Vec::new();
     let mut stats = Stats::default();
 
     let sb = image.superblock();
+
+    let mut push =
+        |severity: Severity, code: &'static str, path: Option<String>, message: String| {
+            findings.push(Finding {
+                severity,
+                code,
+                path,
+                message,
+            })
+        };
 
     // Geometry: the five counts have to add up to the device size, or every
     // later offset is computed against a layout the image does not have.
@@ -98,35 +128,38 @@ pub fn check(image: &Image) -> Report {
         + sb.data_bitmap_blocks
         + sb.data_area_blocks;
     if claimed != sb.total_blocks {
-        findings.push(Finding {
-            severity: Severity::Error,
-            code: "geometry-sum",
-            message: format!(
+        push(
+            Severity::Error,
+            "geometry-sum",
+            None,
+            format!(
                 "block counts add up to {claimed} but total_blocks is {}",
                 sb.total_blocks
             ),
-        });
+        );
     }
 
     let inode_bitmap = match image.inode_bitmap() {
         Ok(bits) => bits,
         Err(e) => {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "bitmap-unreadable",
-                message: format!("cannot read the inode bitmap: {e}"),
-            });
+            push(
+                Severity::Error,
+                "bitmap-unreadable",
+                None,
+                format!("cannot read the inode bitmap: {e}"),
+            );
             return Report { findings, stats };
         }
     };
     let data_bitmap = match image.data_bitmap() {
         Ok(bits) => bits,
         Err(e) => {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "bitmap-unreadable",
-                message: format!("cannot read the data bitmap: {e}"),
-            });
+            push(
+                Severity::Error,
+                "bitmap-unreadable",
+                None,
+                format!("cannot read the data bitmap: {e}"),
+            );
             return Report { findings, stats };
         }
     };
@@ -134,39 +167,46 @@ pub fn check(image: &Image) -> Report {
     stats.inodes_allocated = bit_count(&inode_bitmap, sb.inode_count() as usize) as u32;
     stats.blocks_allocated = bit_count(&data_bitmap, sb.data_area_blocks as usize) as u32;
 
-    // Walk from the root, collecting reachable inodes and referenced blocks.
+    // Walk from the root, collecting reachable inodes, referenced blocks, and a
+    // path for every inode so findings can name a file instead of a number.
     let mut reachable: BTreeSet<u32> = BTreeSet::new();
     let mut referenced_blocks: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut paths: BTreeMap<u32, String> = BTreeMap::new();
+    paths.insert(0, "/".to_string());
     let mut queue = vec![0u32];
 
     while let Some(inode_id) = queue.pop() {
         if !reachable.insert(inode_id) {
             continue; // Already visited; a hard link or a cycle.
         }
+        let at = where_is(inode_id, &paths);
         if inode_id >= sb.inode_count() {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "inode-out-of-range",
-                message: format!("inode {inode_id} is past the inode table"),
-            });
+            push(
+                Severity::Error,
+                "inode-out-of-range",
+                None,
+                format!("{at} is past the inode table"),
+            );
             continue;
         }
         if !bit_get(&inode_bitmap, inode_id as usize) {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "inode-not-allocated",
-                message: format!("inode {inode_id} is reachable but the bitmap marks it free"),
-            });
+            push(
+                Severity::Error,
+                "inode-not-allocated",
+                paths.get(&inode_id).cloned(),
+                format!("{at} is reachable but the bitmap marks it free"),
+            );
         }
 
         let inode = match image.inode(inode_id) {
             Ok(inode) => inode,
             Err(e) => {
-                findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "inode-unreadable",
-                    message: format!("cannot read inode {inode_id}: {e}"),
-                });
+                push(
+                    Severity::Error,
+                    "inode-unreadable",
+                    paths.get(&inode_id).cloned(),
+                    format!("cannot read {at}: {e}"),
+                );
                 continue;
             }
         };
@@ -175,18 +215,28 @@ pub fn check(image: &Image) -> Report {
             InodeType::File => {
                 stats.files += 1;
                 stats.bytes += inode.size as u64;
+                if payload {
+                    check_payload(
+                        image,
+                        inode_id,
+                        paths.get(&inode_id).cloned(),
+                        &at,
+                        &mut push,
+                    );
+                }
             }
             InodeType::Dir => {
                 stats.dirs += 1;
                 if inode.size % DIR_ENTRY_SIZE as u32 != 0 {
-                    findings.push(Finding {
-                        severity: Severity::Error,
-                        code: "dir-size",
-                        message: format!(
-                            "directory inode {inode_id} has size {}, not a multiple of {DIR_ENTRY_SIZE}",
+                    push(
+                        Severity::Error,
+                        "dir-size",
+                        paths.get(&inode_id).cloned(),
+                        format!(
+                            "{at} has size {}, not a multiple of {DIR_ENTRY_SIZE}",
                             inode.size
                         ),
-                    });
+                    );
                 }
             }
         }
@@ -194,56 +244,57 @@ pub fn check(image: &Image) -> Report {
         let blocks = match image.referenced_blocks(inode_id) {
             Ok(blocks) => blocks,
             Err(e) => {
-                findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "blocks-unreadable",
-                    message: format!("cannot walk the blocks of inode {inode_id}: {e}"),
-                });
+                push(
+                    Severity::Error,
+                    "blocks-unreadable",
+                    paths.get(&inode_id).cloned(),
+                    format!("cannot walk the blocks of {at}: {e}"),
+                );
                 continue;
             }
         };
 
         let needed = inode.size.div_ceil(BLOCK_SIZE as u32) as usize;
         if inode.size > 0 && blocks.len() < needed {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "size-vs-blocks",
-                message: format!(
-                    "inode {inode_id} is {} bytes and needs {needed} blocks but references {}",
+            push(
+                Severity::Error,
+                "size-vs-blocks",
+                paths.get(&inode_id).cloned(),
+                format!(
+                    "{at} is {} bytes and needs {needed} blocks but references {}",
                     inode.size,
                     blocks.len()
                 ),
-            });
+            );
         }
 
         for block in blocks {
             *referenced_blocks.entry(block).or_insert(0) += 1;
             if block >= sb.total_blocks {
-                findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "block-out-of-range",
-                    message: format!("inode {inode_id} points at block {block}, past the device"),
-                });
+                push(
+                    Severity::Error,
+                    "block-out-of-range",
+                    paths.get(&inode_id).cloned(),
+                    format!("{at} points at block {block}, past the device"),
+                );
                 continue;
             }
             if block < sb.data_area_start() {
-                findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "block-in-metadata",
-                    message: format!(
-                        "inode {inode_id} points at block {block}, which is inside the metadata area"
-                    ),
-                });
+                push(
+                    Severity::Error,
+                    "block-in-metadata",
+                    paths.get(&inode_id).cloned(),
+                    format!("{at} points at block {block}, inside the metadata area"),
+                );
                 continue;
             }
             if !bit_get(&data_bitmap, (block - sb.data_area_start()) as usize) {
-                findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "block-not-allocated",
-                    message: format!(
-                        "inode {inode_id} uses block {block} but the bitmap marks it free"
-                    ),
-                });
+                push(
+                    Severity::Error,
+                    "block-not-allocated",
+                    paths.get(&inode_id).cloned(),
+                    format!("{at} uses block {block} but the bitmap marks it free"),
+                );
             }
         }
 
@@ -252,33 +303,41 @@ pub fn check(image: &Image) -> Report {
                 Ok(entries) => {
                     for (child, name) in entries {
                         if name.is_empty() {
-                            findings.push(Finding {
-                                severity: Severity::Warning,
-                                code: "dir-empty-name",
-                                message: format!(
-                                    "directory inode {inode_id} has an entry with no name"
-                                ),
-                            });
+                            push(
+                                Severity::Warning,
+                                "dir-empty-name",
+                                paths.get(&inode_id).cloned(),
+                                format!("{at} has an entry with no name"),
+                            );
                             continue;
                         }
                         if child >= sb.inode_count() {
-                            findings.push(Finding {
-                                severity: Severity::Error,
-                                code: "entry-out-of-range",
-                                message: format!(
-                                    "inode {inode_id} has entry {name:?} pointing at inode {child}, past the table"
-                                ),
-                            });
+                            push(
+                                Severity::Error,
+                                "entry-out-of-range",
+                                paths.get(&inode_id).cloned(),
+                                format!("{at} has entry {name:?} pointing at inode {child}, past the table"),
+                            );
                             continue;
                         }
+                        let child_path = if inode_id == 0 {
+                            format!("/{name}")
+                        } else {
+                            format!(
+                                "{}/{name}",
+                                paths.get(&inode_id).cloned().unwrap_or_default()
+                            )
+                        };
+                        paths.entry(child).or_insert(child_path);
                         queue.push(child);
                     }
                 }
-                Err(e) => findings.push(Finding {
-                    severity: Severity::Error,
-                    code: "dir-unreadable",
-                    message: format!("cannot read directory inode {inode_id}: {e}"),
-                }),
+                Err(e) => push(
+                    Severity::Error,
+                    "dir-unreadable",
+                    paths.get(&inode_id).cloned(),
+                    format!("cannot read directory {at}: {e}"),
+                ),
             }
         }
     }
@@ -289,35 +348,72 @@ pub fn check(image: &Image) -> Report {
     // A block two inodes both claim will be overwritten by whichever writes last.
     for (block, count) in &referenced_blocks {
         if *count > 1 {
-            findings.push(Finding {
-                severity: Severity::Error,
-                code: "block-double-referenced",
-                message: format!("block {block} is referenced by {count} inodes"),
-            });
+            push(
+                Severity::Error,
+                "block-double-referenced",
+                None,
+                format!("block {block} is referenced by {count} inodes"),
+            );
         }
     }
 
     // Allocated but unreachable: leaked space that will never be reused.
     for inode_id in 0..sb.inode_count() {
         if bit_get(&inode_bitmap, inode_id as usize) && !reachable.contains(&inode_id) {
-            findings.push(Finding {
-                severity: Severity::Warning,
-                code: "inode-leaked",
-                message: format!("inode {inode_id} is marked allocated but nothing references it"),
-            });
+            push(
+                Severity::Warning,
+                "inode-leaked",
+                None,
+                format!("inode {inode_id} is marked allocated but nothing references it"),
+            );
         }
     }
     for index in 0..sb.data_area_blocks {
         let block = sb.data_area_start() + index;
         if bit_get(&data_bitmap, index as usize) && !referenced_blocks.contains_key(&block) {
-            findings.push(Finding {
-                severity: Severity::Warning,
-                code: "block-leaked",
-                message: format!("block {block} is marked allocated but no inode references it"),
-            });
+            push(
+                Severity::Warning,
+                "block-leaked",
+                None,
+                format!("block {block} is marked allocated but no inode references it"),
+            );
         }
     }
 
     findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.code.cmp(b.code)));
     Report { findings, stats }
+}
+
+/// Validate a file that claims to be an ELF.
+fn check_payload(
+    image: &Image,
+    inode_id: u32,
+    path: Option<String>,
+    at: &str,
+    push: &mut impl FnMut(Severity, &'static str, Option<String>, String),
+) {
+    let Ok(data) = image.read_file(inode_id) else {
+        return;
+    };
+    if !elf::is_elf(&data) {
+        return;
+    }
+    match elf::parse(&data) {
+        Err(problem) => push(
+            Severity::Error,
+            "elf-header",
+            path,
+            format!("{at}: {}", problem.describe()),
+        ),
+        Ok(info) if !info.is_riscv64() => push(
+            Severity::Warning,
+            "elf-machine",
+            path,
+            format!(
+                "{at} is {}, which a 64-bit little-endian RISC-V kernel cannot load",
+                info.describe()
+            ),
+        ),
+        Ok(_) => {}
+    }
 }

@@ -41,6 +41,8 @@ cargo install --git https://github.com/MagicBeards/easyfs
 | `easyfs extract <img> [目录]` | 把所有文件导出到本地目录 |
 | `easyfs stat <img>` | 打印超级块里记录的几何信息 |
 | `easyfs check <img>` | 检查镜像内部一致性，有问题时返回非零 |
+| `easyfs file <img> <路径>` | 判断文件类型：ELF 的位数、字节序、目标机器 |
+| `easyfs diff <a> <b>` | 比较两个镜像，列出差异 |
 
 路径用 `/` 分隔、相对根目录，所以 `easyfs cat fs.img etc/passwd` 可以直接用。根目录就是空路径。
 
@@ -48,10 +50,24 @@ cargo install --git https://github.com/MagicBeards/easyfs
 
 ```bash
 easyfs tree fs.img                    # 打包器到底往里面放了什么？
-easyfs cat fs.img user_shell | file - # 这是 RISC-V 的 ELF，还是一堆垃圾？
+easyfs file fs.img user_shell         # 这是 RISC-V 的 ELF，还是别的东西？
 easyfs extract fs.img /tmp/root       # 全部导出来，慢慢 grep
 easyfs check fs.img                   # 镜像坏了，还是我的内核坏了？
+easyfs diff old.img new.img           # 重新构建之后，到底变了什么？
 ```
+
+## `file`：这个二进制是不是对架构的？
+
+内核加载不了某个程序的时候，报错通常不会告诉你是为什么。而原因往往就在文件的前 20 个字节里。
+
+```console
+$ easyfs file fs.img user_shell
+ELF 64-bit LSB executable, RISC-V (243)
+$ easyfs file fs.img notes.txt
+data (18 bytes, not ELF)
+```
+
+只读 ELF 的标识字段和两个头部字。**这不是一个 ELF 解析器**——它不走 program header、section 和符号表。
 
 ## `check`：镜像坏了，还是内核坏了？
 
@@ -69,6 +85,24 @@ inodes 13 allocated / 12 reachable, blocks 20 allocated / 19 referenced
 **报错（返回非零）**：块数加起来不等于 `total_blocks`；可达的 inode 位图标记为空闲；引用的数据块位图标记为空闲；两个 inode 指向同一块；指针跑出数据区或落进元数据区；inode 的 size 需要的块比它指的多；目录项指向超出 inode 表；目录大小不是 32 的倍数。
 
 **警告（不影响返回值）**：已分配但无人引用的 inode 或数据块；没有名字的目录项。
+
+报错会带上**路径和 inode 号**，不只是 inode 号，所以一眼能看出是哪个文件：
+
+```console
+$ easyfs check fs.img
+error [inode-not-allocated] /hello.txt: /hello.txt (inode 1) is reachable but the bitmap marks it free
+```
+
+### `--payload`：连二进制一起查
+
+文件系统账目完全对得上，里面的程序却可能是不对的。`easyfs check --payload` 会额外读每个以 ELF magic 开头的文件，检查它的标识字段：
+
+| Code | 级别 | 含义 |
+| --- | --- | --- |
+| `elf-header` | 错误 | 有 ELF magic，但标识字段残缺或非法 |
+| `elf-machine` | 警告 | 是合法 ELF，但不是 64 位小端 RISC-V，RISC-V 内核加载不了 |
+
+之所以是警告而不是错误：镜像里放一个别的架构的二进制可能是故意的，由你判断。
 
 ## 自己造一个镜像试
 
