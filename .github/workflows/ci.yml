@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Format
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      # Exercises the real binary against a real image rather than the library
+      # API, so the CLI wiring is covered too.
+      - name: End-to-end on a demo image
+        shell: bash
+        run: |
+          set -eu
+          cargo run --quiet --example demo_image -- demo.img
+          cargo run --quiet -- ls demo.img | tee ls.txt
+          grep -q hello.txt ls.txt
+          cargo run --quiet -- cat demo.img hello.txt > out.txt
+          printf 'hello from easyfs\n' | diff - out.txt
+          cargo run --quiet -- tree demo.img
+          cargo run --quiet -- extract demo.img extracted
+          test -f extracted/sub/inner.txt
