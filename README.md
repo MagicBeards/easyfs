@@ -37,8 +37,15 @@ of your own that reuses the same structures.
 ## Install
 
 ```bash
-cargo install --git https://github.com/MagicBeards/easyfs
+cargo install easyfs-inspect
 ```
+
+The crate is called `easyfs-inspect` because `easyfs` was already taken on
+crates.io; the command it installs is `easyfs`.
+
+Or download a prebuilt binary from
+[Releases](https://github.com/MagicBeards/easyfs/releases) — Linux, macOS and
+Windows, x86_64 and aarch64, each with a sha256.
 
 Or build from a checkout:
 

@@ -31,12 +31,18 @@ d       64  etc
 
 ## 安装
 
-**直接下载二进制**（不需要 Rust 环境）：到 [Releases](https://github.com/MagicBeards/easyfs/releases) 页面，按你的系统下载对应压缩包。
+```bash
+cargo install easyfs-inspect
+```
+
+包名是 `easyfs-inspect`，因为 `easyfs` 这个名字在 crates.io 上已经被占了；它装出来的命令叫 `easyfs`。
+
+**或者直接下载二进制**（不需要 Rust 环境）：到 [Releases](https://github.com/MagicBeards/easyfs/releases) 页面，Linux / macOS / Windows，x86_64 与 aarch64，每个都带 sha256。
 
 **或者从源码装**：
 
 ```bash
-cargo install --git https://github.com/MagicBeards/easyfs
+cargo build --release          # target/release/easyfs
 ```
 
 ## 命令
