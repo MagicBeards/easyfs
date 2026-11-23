@@ -1,5 +1,9 @@
 # easyfs
 
+[![CI](https://github.com/MagicBeards/easyfs/actions/workflows/ci.yml/badge.svg)](https://github.com/MagicBeards/easyfs/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/easyfs-inspect.svg)](https://crates.io/crates/easyfs-inspect)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Inspect `easy-fs` filesystem images from the [rCore tutorial](https://rcore-os.cn/rCore-Tutorial-Book-v3/)
 — without booting the kernel.
 
@@ -18,7 +22,9 @@ d       64  etc
 | --- | --- |
 | [docs/FORMAT.md](docs/FORMAT.md) | The on-disk format byte by byte, with a 40-line Python reader |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | The kernel cannot load a program — what to check, in what order |
+| [docs/ARTICLE.md](docs/ARTICLE.md) | Why this exists, in Chinese and English, written to be republished |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and what a good change looks like |
 
 ## Why this exists
 
