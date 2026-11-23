@@ -54,6 +54,7 @@ cargo build --release          # target/release/easyfs
 | `easyfs tree <img> [路径]` | 打印整棵目录树 |
 | `easyfs extract <img> [目录]` | 把所有文件导出到本地目录 |
 | `easyfs stat <img>` | 打印超级块里记录的几何信息；`--json` |
+| `easyfs df <img>` | 镜像用了多少：inode、数据块、字节；`--json` |
 | `easyfs check <img>` | 检查镜像内部一致性，有问题时返回非零；`--json`、`--errors-only`、`--payload` |
 | `easyfs file <img> <路径>` | 判断文件类型：ELF 的位数、字节序、目标机器；`--json` |
 | `easyfs diff <a> <b>` | 比较两个镜像，列出差异；`--json` |
@@ -68,6 +69,7 @@ easyfs file fs.img user_shell         # 这是 RISC-V 的 ELF，还是别的东�
 easyfs extract fs.img /tmp/root       # 全部导出来，慢慢 grep
 easyfs check fs.img                   # 镜像坏了，还是我的内核坏了？
 easyfs diff old.img new.img           # 重新构建之后，到底变了什么？
+easyfs df fs.img                      # 我的程序放得下吗？
 ```
 
 ## 在脚本里用

@@ -5,6 +5,21 @@ Notable changes, newest first. This project follows
 the public interface, so a flag being removed or changing meaning is a breaking
 change.
 
+## 0.5.0 — 2026-11-23
+
+### Added
+
+- `easyfs df <img>`: how much of the image is in use — inodes, data blocks, and
+  bytes, from the bitmaps. `--json` too. `stat` reports the geometry; this
+  reports the usage, which is the question after packing a set of programs.
+- `Image::inode_usage` and `Image::data_block_usage` in the library API.
+- `CONTRIBUTING.md`.
+
+### Notes
+
+- Usage counts allocation, not reachability. An inode leaked by a packer counts
+  as used; `check` is what distinguishes a leak from a file.
+
 ## 0.4.1 — 2026-11-23
 
 ### Fixed

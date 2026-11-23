@@ -51,6 +51,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show how much of the image is in use.
+    Df {
+        /// Path to the filesystem image.
+        image: PathBuf,
+        /// Emit a JSON object instead of labelled lines.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the image for internal inconsistencies.
     ///
     /// Exits non-zero when an error is found, so it can gate CI.
@@ -199,6 +207,28 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("inodes              {}", sb.inode_count());
             println!("inode_area_start    {}", sb.inode_area_start());
             println!("data_area_start     {}", sb.data_area_start());
+        }
+        Command::Df { image, json } => {
+            let image = open(&image)?;
+            let (inodes_used, inodes_total) = image.inode_usage().map_err(|e| e.to_string())?;
+            let (blocks_used, blocks_total) =
+                image.data_block_usage().map_err(|e| e.to_string())?;
+            let bytes_used = blocks_used as u64 * 512;
+            let bytes_total = blocks_total as u64 * 512;
+            if json {
+                println!(
+                    "{{\"inodes\":{{\"used\":{inodes_used},\"total\":{inodes_total}}},\"blocks\":{{\"used\":{blocks_used},\"total\":{blocks_total}}},\"bytes\":{{\"used\":{bytes_used},\"total\":{bytes_total}}}}}"
+                );
+                return Ok(());
+            }
+            println!("inodes  {inodes_used} / {inodes_total} used");
+            println!("blocks  {blocks_used} / {blocks_total} used");
+            let percent = if bytes_total == 0 {
+                0.0
+            } else {
+                bytes_used as f64 * 100.0 / bytes_total as f64
+            };
+            println!("space   {bytes_used} / {bytes_total} bytes used ({percent:.1}%)");
         }
         Command::Check {
             image,

@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use crate::format::{
-    bit_get, parse_dir_entry, DiskInode, Error, InodeType, SuperBlock, BLOCK_SIZE, DIRECT_BLOCKS,
-    DIR_ENTRY_SIZE, DISK_INODE_SIZE, INDIRECT_BLOCKS,
+    bit_count, bit_get, parse_dir_entry, DiskInode, Error, InodeType, SuperBlock, BLOCK_SIZE,
+    DIRECT_BLOCKS, DIR_ENTRY_SIZE, DISK_INODE_SIZE, INDIRECT_BLOCKS,
 };
 
 /// A filesystem image held in memory.
@@ -244,6 +244,23 @@ impl Image {
             }
         }
         Ok(out)
+    }
+
+    /// `(used, total)` inodes according to the inode bitmap.
+    ///
+    /// This counts allocation, not reachability: an inode leaked by a buggy
+    /// packer counts as used. [`check`](crate::check) reports the difference.
+    pub fn inode_usage(&self) -> Result<(u32, u32), Error> {
+        let bitmap = self.inode_bitmap()?;
+        let total = self.superblock.inode_count();
+        Ok((bit_count(&bitmap, total as usize) as u32, total))
+    }
+
+    /// `(used, total)` data blocks according to the data bitmap.
+    pub fn data_block_usage(&self) -> Result<(u32, u32), Error> {
+        let bitmap = self.data_bitmap()?;
+        let total = self.superblock.data_area_blocks;
+        Ok((bit_count(&bitmap, total as usize) as u32, total))
     }
 }
 

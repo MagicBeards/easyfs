@@ -291,3 +291,21 @@ fn findings_name_the_path_not_just_the_inode() {
         finding.message
     );
 }
+
+#[test]
+fn usage_counters_match_the_bitmaps() {
+    let image = Image::from_bytes(small_image()).unwrap();
+    assert_eq!(image.inode_usage().unwrap(), (4, 4096));
+    assert_eq!(image.data_block_usage().unwrap(), (4, 1021));
+}
+
+#[test]
+fn usage_counts_leaked_entries_as_used() {
+    let mut bytes = small_image();
+    // Mark inode 9 allocated without linking it anywhere.
+    bytes[512 + 1] |= 1 << 1;
+    let image = Image::from_bytes(bytes).unwrap();
+    // Usage reports allocation, which is what `df` should show; `check` is what
+    // distinguishes a leak from a file.
+    assert_eq!(image.inode_usage().unwrap().0, 5);
+}

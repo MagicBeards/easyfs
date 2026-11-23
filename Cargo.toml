@@ -3,7 +3,7 @@
 # by an unrelated crate in 2024. The library and the binary keep the name
 # `easyfs`, so `use easyfs::` and the command users type are unchanged.
 name = "easyfs-inspect"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Inspect easy-fs filesystem images from the rCore tutorial, without booting the kernel"

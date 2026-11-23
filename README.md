@@ -68,6 +68,7 @@ cargo build --release          # target/release/easyfs
 | `easyfs tree <img> [path]` | Print the whole tree. |
 | `easyfs extract <img> [dir]` | Copy every file out to a directory. |
 | `easyfs stat <img>` | Print the geometry recorded in the superblock. `--json`. |
+| `easyfs df <img>` | How much of the image is in use: inodes, blocks, bytes. `--json`. |
 | `easyfs check <img>` | Look for internal inconsistencies. Exits non-zero on error. `--json`, `--errors-only`, `--payload`. |
 | `easyfs file <img> <path>` | Name a file's type: ELF class, byte order and machine. `--json`. |
 | `easyfs diff <a> <b>` | List what differs between two images. `--json`. |
@@ -83,6 +84,7 @@ easyfs file fs.img user_shell               # is this a RISC-V ELF, or something
 easyfs extract fs.img /tmp/root            # pull everything out and grep it
 easyfs check fs.img                         # is the image broken, or is my kernel?
 easyfs diff old.img new.img                 # what changed after I rebuilt?
+easyfs df fs.img                            # did my programs fit?
 ```
 
 ## Scripting
