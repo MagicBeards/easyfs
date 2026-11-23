@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::format::{
-    parse_dir_entry, DiskInode, Error, InodeType, SuperBlock, BLOCK_SIZE, DIRECT_BLOCKS,
+    bit_get, parse_dir_entry, DiskInode, Error, InodeType, SuperBlock, BLOCK_SIZE, DIRECT_BLOCKS,
     DIR_ENTRY_SIZE, DISK_INODE_SIZE, INDIRECT_BLOCKS,
 };
 
@@ -149,6 +149,27 @@ impl Image {
 
     /// Read a directory's entries.
     pub fn read_dir(&self, inode_id: u32) -> Result<Vec<Entry>, Error> {
+        let mut entries = Vec::new();
+        for (inode, name) in self.read_dir_raw(inode_id)? {
+            let child_inode = self.inode(inode)?;
+            entries.push(Entry {
+                inode,
+                name,
+                kind: child_inode.kind,
+                size: child_inode.size,
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Read a directory's entry names and inode numbers without resolving the
+    /// child inodes.
+    ///
+    /// [`read_dir`](Self::read_dir) needs each child's record to report its kind
+    /// and size, so a single entry pointing past the inode table makes the whole
+    /// listing fail. The checker wants the opposite: report that entry and carry
+    /// on with the rest.
+    pub fn read_dir_raw(&self, inode_id: u32) -> Result<Vec<(u32, String)>, Error> {
         let inode = self.inode(inode_id)?;
         if inode.kind != InodeType::Dir {
             return Err(Error::InvalidField("not a directory"));
@@ -158,14 +179,7 @@ impl Image {
         let mut entries = Vec::with_capacity(count);
         for index in 0..count {
             let record = &raw[index * DIR_ENTRY_SIZE..(index + 1) * DIR_ENTRY_SIZE];
-            let (child, name) = parse_dir_entry(record, index)?;
-            let child_inode = self.inode(child)?;
-            entries.push(Entry {
-                inode: child,
-                name,
-                kind: child_inode.kind,
-                size: child_inode.size,
-            });
+            entries.push(parse_dir_entry(record, index)?);
         }
         Ok(entries)
     }
@@ -181,6 +195,55 @@ impl Image {
             }
         }
         Ok(current)
+    }
+
+    /// Raw bytes of the inode bitmap.
+    pub fn inode_bitmap(&self) -> Result<Vec<u8>, Error> {
+        self.read_region(1, self.superblock.inode_bitmap_blocks)
+    }
+
+    /// Raw bytes of the data bitmap.
+    pub fn data_bitmap(&self) -> Result<Vec<u8>, Error> {
+        let start = 1 + self.superblock.inode_bitmap_blocks + self.superblock.inode_area_blocks;
+        self.read_region(start, self.superblock.data_bitmap_blocks)
+    }
+
+    fn read_region(&self, start: u32, blocks: u32) -> Result<Vec<u8>, Error> {
+        let mut out = Vec::with_capacity(blocks as usize * BLOCK_SIZE);
+        for block in start..start + blocks {
+            out.extend_from_slice(self.block(block)?);
+        }
+        Ok(out)
+    }
+
+    /// Whether the inode bitmap marks this inode as allocated.
+    pub fn inode_allocated(&self, inode_id: u32) -> Result<bool, Error> {
+        let bitmap = self.inode_bitmap()?;
+        Ok(bit_get(&bitmap, inode_id as usize))
+    }
+
+    /// Whether the data bitmap marks this device block as allocated.
+    ///
+    /// The data bitmap is indexed relative to the start of the data area.
+    pub fn data_block_allocated(&self, block: u32) -> Result<bool, Error> {
+        let bitmap = self.data_bitmap()?;
+        let start = self.superblock.data_area_start();
+        if block < start {
+            return Ok(false);
+        }
+        Ok(bit_get(&bitmap, (block - start) as usize))
+    }
+
+    /// The device block numbers an inode references, in file order.
+    pub fn referenced_blocks(&self, inode_id: u32) -> Result<Vec<u32>, Error> {
+        let inode = self.inode(inode_id)?;
+        let mut out = Vec::new();
+        for index in 0..inode.block_count() as usize {
+            if let Some(block) = self.data_block(&inode, index)? {
+                out.push(block);
+            }
+        }
+        Ok(out)
     }
 }
 

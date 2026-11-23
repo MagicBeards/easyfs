@@ -42,3 +42,5 @@ jobs:
           cargo run --quiet -- tree demo.img
           cargo run --quiet -- extract demo.img extracted
           test -f extracted/sub/inner.txt
+          # A valid image must pass the checker with a zero exit code.
+          cargo run --quiet -- check demo.img

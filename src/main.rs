@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use easyfs::{Image, InodeType};
+use easyfs::{Image, InodeType, Severity};
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +41,16 @@ enum Command {
     Stat {
         /// Path to the filesystem image.
         image: PathBuf,
+    },
+    /// Check the image for internal inconsistencies.
+    ///
+    /// Exits non-zero when an error is found, so it can gate CI.
+    Check {
+        /// Path to the filesystem image.
+        image: PathBuf,
+        /// Report errors only; skip warnings about leaked inodes and blocks.
+        #[arg(long)]
+        errors_only: bool,
     },
     /// Print the whole directory tree.
     Tree {
@@ -113,6 +123,42 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("inodes              {}", sb.inode_count());
             println!("inode_area_start    {}", sb.inode_area_start());
             println!("data_area_start     {}", sb.data_area_start());
+        }
+        Command::Check { image, errors_only } => {
+            let image = open(&image)?;
+            let report = easyfs::check(&image);
+            for finding in &report.findings {
+                if errors_only && finding.severity != Severity::Error {
+                    continue;
+                }
+                println!(
+                    "{} [{}] {}",
+                    finding.severity.label(),
+                    finding.code,
+                    finding.message
+                );
+            }
+            let stats = &report.stats;
+            println!(
+                "inodes {} allocated / {} reachable, blocks {} allocated / {} referenced",
+                stats.inodes_allocated,
+                stats.inodes_reachable,
+                stats.blocks_allocated,
+                stats.blocks_referenced
+            );
+            println!(
+                "{} files, {} directories, {} bytes of content",
+                stats.files, stats.dirs, stats.bytes
+            );
+            if report.has_errors() {
+                println!(
+                    "{} error(s), {} warning(s)",
+                    report.count(Severity::Error),
+                    report.count(Severity::Warning)
+                );
+                return Err(format!("{} error(s) found", report.count(Severity::Error)));
+            }
+            println!("no errors, {} warning(s)", report.count(Severity::Warning));
         }
         Command::Tree { image, path } => {
             let image = open(&image)?;

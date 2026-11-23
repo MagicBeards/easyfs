@@ -17,8 +17,10 @@
 //! # Ok::<(), easyfs::Error>(())
 //! ```
 
+pub mod check;
 pub mod format;
 pub mod image;
 
+pub use check::{check, Finding, Report, Severity, Stats};
 pub use format::{Error, InodeType, SuperBlock};
 pub use image::{Entry, Image};

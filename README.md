@@ -45,6 +45,7 @@ cargo build --release          # target/release/easyfs
 | `easyfs tree <img> [path]` | Print the whole tree. |
 | `easyfs extract <img> [dir]` | Copy every file out to a directory. |
 | `easyfs stat <img>` | Print the geometry recorded in the superblock. |
+| `easyfs check <img>` | Look for internal inconsistencies. Exits non-zero on error. |
 
 Paths are slash-separated and relative to the root, so `easyfs cat fs.img
 etc/passwd` works. The root is the empty path.
@@ -55,7 +56,47 @@ Typical uses:
 easyfs tree fs.img                          # what did the packer actually put in?
 easyfs cat fs.img user_shell | file -       # is this a RISC-V ELF or garbage?
 easyfs extract fs.img /tmp/root            # pull everything out and grep it
+easyfs check fs.img                         # is the image broken, or is my kernel?
 ```
+
+## `check`: is the image wrong, or is the kernel?
+
+That is the question `ls` cannot answer. `easyfs check` walks the tree from the
+root and compares it against the bitmaps, so it can tell you the image is
+self-inconsistent before you go looking for a bug in your kernel.
+
+```console
+$ easyfs check fs.img
+warning [inode-leaked] inode 12 is marked allocated but nothing references it
+error [block-not-allocated] inode 3 uses block 1031 but the bitmap marks it free
+inodes 13 allocated / 12 reachable, blocks 20 allocated / 19 referenced
+1 files, 2 directories, 812 bytes of content
+1 error(s), 1 warning(s)
+```
+
+It reports, as errors:
+
+| Code | Meaning |
+| --- | --- |
+| `geometry-sum` | The five block counts do not add up to `total_blocks` |
+| `inode-not-allocated` | An inode is reachable but its bitmap bit is clear |
+| `block-not-allocated` | An inode references a data block the bitmap calls free |
+| `block-double-referenced` | Two inodes claim the same data block |
+| `block-out-of-range` / `block-in-metadata` | A pointer leaves the data area |
+| `size-vs-blocks` | The inode's size needs more blocks than it points at |
+| `entry-out-of-range` | A directory entry names an inode past the table |
+| `dir-size` | A directory's size is not a multiple of 32 |
+| `inode-unreadable` / `dir-unreadable` / `bitmap-unreadable` | A structure could not be read |
+
+And as warnings:
+
+| Code | Meaning |
+| --- | --- |
+| `inode-leaked` | Marked allocated, reachable from nothing — space never reclaimed |
+| `block-leaked` | Same, for a data block |
+| `dir-empty-name` | An entry with no name |
+
+Warnings do not change the exit code; `--errors-only` hides them from the output.
 
 ## Try it without a kernel
 
@@ -88,11 +129,10 @@ device. A directory's entries live in its data blocks as 32-byte records: a
 
 - **Read-only.** It inspects images; it does not build or modify them. Use
   `easy-fs-fuse` (or your own packer) to write one.
-- **No consistency checking.** It does not walk the bitmaps to look for leaks or
-  cross-links. A corrupt image produces a read error or odd output, not a
-  `fsck`-style report.
-- **Bitmaps are not read at all.** Allocation state is not shown, because
-  nothing here allocates.
+- **`check` is not a repair tool.** It reports; it never writes. A leaked inode
+  stays leaked until you rebuild the image.
+- **`check` does not validate file contents.** It confirms that blocks are
+  reachable and accounted for, not that a binary in the image is a valid ELF.
 - Only the layout above. A fork that changed the inode size or the pointer
   layout will not parse.
 

@@ -313,3 +313,27 @@ pub fn encode_dir_entry(inode: u32, name: &str) -> [u8; DIR_ENTRY_SIZE] {
     out[4..4 + len].copy_from_slice(&bytes[..len]);
     out
 }
+
+/// Read one bit out of a bitmap, least-significant bit first within each byte.
+pub fn bit_get(bytes: &[u8], index: usize) -> bool {
+    let byte = index / 8;
+    let bit = index % 8;
+    match bytes.get(byte) {
+        Some(value) => value & (1 << bit) != 0,
+        None => false,
+    }
+}
+
+/// Set one bit in a bitmap.
+pub fn bit_set(bytes: &mut [u8], index: usize) {
+    let byte = index / 8;
+    let bit = index % 8;
+    if let Some(value) = bytes.get_mut(byte) {
+        *value |= 1 << bit;
+    }
+}
+
+/// Count the set bits in the first `limit` positions of a bitmap.
+pub fn bit_count(bytes: &[u8], limit: usize) -> usize {
+    (0..limit).filter(|index| bit_get(bytes, *index)).count()
+}

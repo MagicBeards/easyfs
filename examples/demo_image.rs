@@ -64,8 +64,33 @@ fn main() {
         b"nested\n",
     );
 
+    mark_allocated(
+        &mut bytes,
+        &sb,
+        &[0, 1, 2, 3],
+        &[data_start, data_start + 1, data_start + 2, data_start + 3],
+    );
+
     std::fs::write(&path, &bytes).expect("write demo image");
     println!("wrote {} ({} bytes)", path.display(), bytes.len());
+}
+
+/// Mark the inode and data bitmaps so the image passes `easyfs check`.
+fn mark_allocated(bytes: &mut [u8], sb: &SuperBlock, inodes: &[u32], data_blocks: &[u32]) {
+    let inode_bitmap_start = BLOCK_SIZE;
+    for inode in inodes {
+        let byte = inode_bitmap_start + (*inode as usize / 8);
+        bytes[byte] |= 1 << (inode % 8);
+    }
+
+    let data_bitmap_start =
+        (1 + sb.inode_bitmap_blocks + sb.inode_area_blocks) as usize * BLOCK_SIZE;
+    let data_start = sb.data_area_start();
+    for block in data_blocks {
+        let index = (*block - data_start) as usize;
+        let byte = data_bitmap_start + index / 8;
+        bytes[byte] |= 1 << (index % 8);
+    }
 }
 
 /// Lay out one inode and its single data block.
